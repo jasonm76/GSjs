@@ -1,0 +1,199 @@
+<!DOCTYPE html5>
+<html>
+<head>
+	<title>JS App</title>
+	<style>
+		body { margin: 0; } 
+		canvas { width: 1024; height: 768 } 
+	</style>
+</head>
+<body>
+  <script type="x-shader/x-vertex" id="vertexShader" >
+    varying vec2 vUv;
+
+    void main() {
+ 		//vUv = uv;
+ 		vUv = vec2(uv.x, uv.y);
+        gl_Position =   projectionMatrix * 
+                        modelViewMatrix * 
+                        vec4(position,1.0);
+    }
+  </script>
+  <script type="x-shader/x-vertex" id="demoShader">
+  	uniform vec3 ShaderColor;
+
+  	void main(void) {
+    	gl_FragColor = vec4(ShaderColor, 1.0);
+	}
+  </script>
+  <script type="x-shader/x-vertex" id="textureShader">
+  	uniform sampler2D texture1;
+    varying vec2 vUv;
+
+  	void main(void) {
+  		gl_FragColor = texture2D(texture1, vUv);
+	}
+  </script>
+
+  <script type="x-shader/x-vertex" id="ntscShader">
+  	uniform sampler2D texture1;
+  	varying vec2 vUv;
+
+	mat3 decoderMatrix = mat3(1, 1, 1, 0, -0.3946419954299927, 2.03206205368042, 1.139883041381836, -0.5806220173835754, 0);
+	vec3 decoderOffset = vec3(0, 0, 0);
+	vec3 c0 = vec3(0.2794082164764404, 0.260298490524292, 0.260298490524292);
+	vec3 c1 = vec3(0.2359260767698288, 0.2478785365819931, 0.2478785365819931);
+	vec3 c2 = vec3(0.1346162706613541, 0.2137254178524017, 0.2137254178524017);
+	vec3 c3 = vec3(0.03665492311120033, 0.1660159379243851, 0.1660159379243851);
+	vec3 c4 = vec3(-0.01538314949721098, 0.11509008705616, 0.11509008705616);
+	vec3 c5 = vec3(-0.02210377156734467, 0.07008156925439835, 0.07008156925439835);
+	vec3 c6 = vec3(-0.009993300773203373, 0.036478441208601, 0.036478441208601);
+	vec3 c7 = vec3(-0.0007181052351370454, 0.01543270610272884, 0.01543270610272884);
+	vec3 c8 = vec3(0.001296989037655294, 0.005147919990122318, 0.005147919990122318);
+	vec2 textureSize = vec2(1024, 256);
+	float subcarrier = 0.25;
+	vec2 phaseInfo = vec2(0.908333301, 0.0);
+
+	float PI = 3.14159265358979323846264;
+
+	vec3 pixel(in vec2 q)
+	{
+		vec3 c = texture2D(texture1, q).rgb;			// c = the texture color at x,y (q)
+
+		float phase = 2.0 * PI * (subcarrier * textureSize.x * q.x + phaseInfo.x); 
+		return c * vec3(1.0, sin(phase), (1.0 - 2.0 * phaseInfo.y) * cos(phase));
+	}
+
+	vec3 pixels(vec2 q, float i)
+	{
+		return pixel(vec2(q.x + i, q.y)) + pixel(vec2(q.x - i, q.y));
+	}
+
+	void main(void)
+	{
+		vec3 c = pixel(vUv) * c0;			
+		c += pixels(vUv, 1.0 / textureSize.x) * c1;
+		c += pixels(vUv, 2.0 / textureSize.x) * c2;
+		c += pixels(vUv, 3.0 / textureSize.x) * c3;
+		c += pixels(vUv, 4.0 / textureSize.x) * c4;
+		c += pixels(vUv, 5.0 / textureSize.x) * c5;
+		c += pixels(vUv, 6.0 / textureSize.x) * c6;
+		c += pixels(vUv, 7.0 / textureSize.x) * c7;
+		c += pixels(vUv, 8.0 / textureSize.x) * c8;
+
+		gl_FragColor = vec4(decoderMatrix * c + decoderOffset, 1.0);
+	}
+  </script>
+  <script type="x-shader/x-vertex" id="barrelShader">
+  	uniform sampler2D texture1;
+
+	vec2 textureSize = vec2(1024,256);
+	float barrel = 0.10;
+	vec2 barrelSize = vec2(1, 0.75);
+
+	float scanlineLevel = 0.50;
+
+	float centerLighting = 0.0;
+
+	float luminanceGain = 1.0;
+
+	float PI = 3.14159265358979323846264;
+
+	varying vec2 vUv;
+
+	void main(void)
+	{
+
+		vec2 qc = (vUv - vec2(0.5, 0.5)) * barrelSize;
+		vec2 qb = barrel * qc * dot(qc, qc);
+		vec2 q  = vUv + qb;
+
+		vec3 c = texture2D(texture1, q).rgb;
+
+		float scanline = sin(PI * textureSize.y * q.y);
+		c *= mix(1.0, scanline * scanline, scanlineLevel);
+
+		vec2 lighting = qc * centerLighting;
+		c *= exp(-dot(lighting, lighting));
+
+		c *= luminanceGain;
+
+		gl_FragColor = vec4(c, 1.0);
+	}
+  </script>
+  <script src="three.min.js"></script>
+  
+  <script>
+	var rttScene = new THREE.Scene();
+	var renderTargetParams = {
+      minFilter:THREE.LinearFilter,
+      stencilBuffer:false,
+      depthBuffer:false
+    };
+    // Load the raw image that is a copy of the Apple II display memory
+    var apple_memory = THREE.ImageUtils.loadTexture( "lo-res-raw.png" );
+    var imageWidth = 1024.0;
+    var imageHeight = 768.0;
+    // Create bugger
+    var ntsc_texture = new THREE.WebGLRenderTarget( imageWidth, imageHeight, renderTargetParams );
+    var ntsc_shader_material = new THREE.ShaderMaterial( {
+		uniforms: {
+			texture1: { type: "t", value: apple_memory }
+		},
+		vertexShader: document.getElementById( 'vertexShader' ).textContent,			
+		fragmentShader: document.getElementById( 'ntscShader' ).textContent,
+	} );
+
+    // Setup render-to-texture scene
+	var rttCamera = new THREE.OrthographicCamera( imageWidth / - 2, imageWidth / 2, imageHeight / 2, imageHeight / - 2, -10000, 10000 );
+
+	var rttGeometry = new THREE.PlaneGeometry( imageWidth, imageHeight );
+	var rttMesh = new THREE.Mesh( rttGeometry, ntsc_shader_material );
+	rttMesh.position.z = -100;
+	rttScene.add( rttMesh );
+
+
+    var scene = new THREE.Scene();
+    var camera = new THREE.PerspectiveCamera(45, imageWidth/imageHeight, 1, 1000);
+    //var camera = new THREE.OrthographicCamera(-384, 384, -288, 288, -1000, 1000);
+    var renderer = new THREE.WebGLRenderer();
+    renderer.setSize(imageWidth, imageHeight);
+    document.body.appendChild(renderer.domElement);
+
+    var cube_geometry = new THREE.BoxGeometry( imageWidth, imageHeight, 1 );
+
+	var shader_material = new THREE.ShaderMaterial( {
+		uniforms: {
+			texture1: { type: "t", value: ntsc_texture }
+			//ShaderColor: { type: "c", value: new THREE.Color( 0xFF8040 ) },
+		},
+		vertexShader: document.getElementById( 'vertexShader' ).textContent,			
+		fragmentShader: document.getElementById( 'barrelShader' ).textContent,
+	} );
+
+	var cube = new THREE.Mesh( cube_geometry, shader_material );
+	//var plane = new THREE.Mesh( plane_geometry, shader_material );
+	//var plane2 = new THREE.Mesh( plane_geometry, plain_material );
+	scene.add( cube );
+
+	//var geometry = new THREE.PlaneBufferGeometry( 592, 500);
+	
+	//var pcolor = new THREE.Color( 0xFF8040);
+	
+	//var material = new THREE.MeshBasicMaterial( {color: 0xff0000, side: THREE.DoubleSide} );
+	//var plane = new THREE.Mesh( geometry, shader_material );
+	//scene.add( plane );
+
+	camera.position.z = 1.5;
+	cube.position.z = -695.293506+1.0;
+	function render() {
+		requestAnimationFrame( render );
+		//cube.rotation.x += 0.01;
+	    //cube.rotation.y += 0.1;
+	    renderer.render( rttScene, rttCamera, ntsc_texture);
+		renderer.render( scene, camera );
+	}
+	render();
+  </script>
+</body>
+</html>
